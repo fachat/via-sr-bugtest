@@ -1,0 +1,178 @@
+; sending code for 6522 shift register example
+;
+; mass data test.
+;
+; mass data is generated using a pseudo random generator
+; so that the receiver can easily verify the correctness of the
+; received data
+;
+
+	; load address
+	.word $1000
+* = $1000
+
+VIA		=$e840
+
+; ----- Serial I/O 6522 -----
+PB             = VIA+0
+PA             = VIA+1
+DDRB           = VIA+2
+DDRA           = VIA+3
+T1LC           = VIA+4
+T1HC           = VIA+5
+T1LL           = VIA+6
+T1HL           = VIA+7
+T2LC           = VIA+8
+T2HC           = VIA+9
+SR             = VIA+10
+ACR            = VIA+11
+PCR            = VIA+12
+IFR            = VIA+13
+IER            = VIA+14
+PA_NOHS        = VIA+15
+
+UP             = PA_NOHS
+UPDIR          = DDRA
+
+T2VAL          = 0
+
+#ifdef T2
+ACRVAL         = %00010100    ; use T2 as timer, <T2>+2 cycles per bit, min 4 (<T2> = 0)
+#endif
+
+#ifdef PHI2
+ACRVAL         = %00011000    ; use Phi2 as SR clock, i.e. 2 Phi2 cycles / bit
+#endif
+
+NUMBYTES       = 0            ; negative number of bytes to transfer
+                              ; 0 means transfer 64k
+;NUMBYTES       = -16384
+
+               ; init
+
+START          SEI
+               LDY #$41       ; Char to send. start with ascii 'A'
+               LDX #$7F
+               STX IER        ; disable VIA IRQ
+               LDX $00
+               STX ACR        ; disable shift register
+               LDX #%00000010
+               STX UPDIR      ; PB0 is an input, PB1 is output
+               STX UP         ; initial
+               LDX #%00000000 ; don't care; SR mode overwrites it
+               STX PCR  
+
+               JSR rng_init   ; init pseudo random number generator
+
+               ; set T2 latch to 1
+
+               ;SEI            ; disallow interrupt, so rcv will not run into timeout
+
+               LDX #<T2VAL
+               STX T2LC
+               LDX #>T2VAL
+               STX T2HC
+
+               LDA #<NUMBYTES
+               STA counter
+               LDA #>NUMBYTES
+               STA counter + 1
+
+               ; signal start
+               LDX #$00
+               STX UP
+
+               ; wait for rcv ready and send data
+
+               LDX #ACRVAL    ; SR mode to send out
+               STX ACR
+LOOP
+               JSR rng_next
+               TAY
+
+               LDA #%00000001 ; if PB0 is high, the receiver is busy
+BUSY           BIT UP
+               BNE BUSY       ; wait for PB0 low, meaning rcv is ready
+
+               STY SR         ; store the char to send in the shift register
+                              ; also clears IFR.2 (SR interrupt)
+
+               ; wait for ack from rcv
+
+               LDA #%00000001
+WAITACK        BIT UP
+               BEQ WAITACK    ; wait for PB0 high, i.e. rcv ack'd byte
+
+               ; check if SR is actually done (if not, ack was in error)
+
+NOIFR          LDA IFR        ; load the Interrupt Flag Register
+               AND #$04       ; check to see if the SR bit is set
+               BEQ NOIFR      ; if not, wait.
+               STA IFR        ; clear the interrupt flag
+
+               ; next byte
+
+               INC counter
+               BNE LOOP
+               INC counter + 1
+               BNE LOOP
+
+               LDX #%00000010
+               STX UP         ; busy
+
+               RTS
+
+counter		.word 0
+
+		; ---------------------------
+		; for simplicity, and we only need random data to compare,
+		; not any scientifically "valid" randomness, we use a
+		; the PRNG from here https://codebase64.org/doku.php?id=base:small_fast_16-bit_prng
+		; with a fixed seed of $3d67 to achieve a period of the full 64k
+
+rng_s		= 43714
+rng_magic	= $3d67
+
+state		.word 0
+
+rng_init	lda #<rng_s
+		sta state
+		lda #>rng_s
+		sta state + 1
+		rts
+
+rng_next
+		 lda state
+		 beq lowZero ; $0000 and $8000 are special values to test for
+		 
+		 ; Do a normal shift
+		 asl state
+		 lda state+1
+		 rol
+		 bcc noEor
+		 
+		doEor:
+		  ; high byte is in .A
+		  eor #>rng_magic
+		  sta state+1
+		  lda state
+		  eor #<rng_magic
+		  sta state
+		lda state+1	; return the high byte of the state
+		  rts
+		 
+		lowZero:
+		 lda state+1
+		 beq doEor ; High byte is also zero, so apply the EOR
+		           ; For speed, you could store 'magic' into 'state' directly
+		           ; instead of running the EORs
+		 
+		 ; wasn't zero, check for $8000
+		 asl
+		 beq noEor ; if $00 is left after the shift, then it was $80
+		 bcs doEor ; else, do the EOR based on the carry bit as usual
+		 
+		noEor:
+		 sta state+1
+		 rts
+

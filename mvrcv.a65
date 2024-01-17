@@ -1,0 +1,336 @@
+; receiving code for 6522 shift register example
+;
+; mass data example
+;
+; receives data as long as UP.1 is low,
+; then re-inits the data generator for the
+; next streak of pseudo-random data
+;
+
+* = $100F
+
+VIA            =$9110
+
+; ----- Serial I/O 6522 -----
+PB             = VIA+0
+PA             = VIA+1
+DDRB           = VIA+2 
+DDRA           = VIA+3
+T1LC           = VIA+4
+T1HC           = VIA+5
+TlLL           = VIA+6
+TlHL           = VIA+7
+T2LC           = VIA+8
+T2HC           = VIA+9
+SR             = VIA+10
+ACR            = VIA+11
+PCR            = VIA+12
+IFR            = VIA+13
+IER            = VIA+14
+PA_NOHS        = VIA+15
+
+VIA2           = $9120
+IER2           = VIA2
+
+UP             = PB
+UPDIR          = DDRB
+
+               ;-----------------
+               ; init code
+START 
+               LDX #$7F
+               STX IER
+               STX IER2
+               LDX #$00
+               STX ACR        ; disable shift register
+               LDX #%00000000
+               STX PCR        ; don't care
+               LDX #%00000001 ; set PB0 as an output
+               STX UPDIR
+               STX UP         ; set PB0 as high for not ready, PB1 as start from sender
+
+               LDX #%00001100 ; SR mode 011 (shift in under control of
+                              ;              external clock pulses)
+                              ;              (bits 2-4)
+               STX ACR
+
+               ;-----------------
+               ; iterate over streaks, i.e. intervals
+               ; where sender signals ready to send
+
+STREAK         JSR rng_init   ; make sure we re-init for every stream
+
+               LDA #0
+               STA cbytes
+               STA cbytes+1
+               STA cbytes+2
+               STA cshifterr
+               STA cshifterr+1
+               STA cshifterr+2
+               STA cbiterr
+               STA cbiterr+1
+               STA cbiterr+2
+
+               LDA #13
+               JSR $FFD2
+
+               LDA #%00000010
+WAITSTART      BIT UP
+               BNE WAITSTART
+
+               ; signal rcv ready and wait for received byte
+               ; wait only for 256 iterations, if not received, signal timeout/framing prob
+
+               LDA SR         ; read SR value to clear SR state
+
+               ;-----------------
+               ; receive a byte
+GO
+               LDX #$00       ; UP value and initial counter
+               STX UP         ; pull PB0 low to indicate ready
+
+               JSR rng_next   ; this is the byte we expect
+               TAY
+
+WAIT           LDA IFR        ; load interrupt flag register
+               AND #%00000100 ; check if SR interrupt bit is set
+               BNE GOTIT      ; yes, continue
+
+               INX            ; next iteration
+               BNE WAIT       ; not yet done with all iterations
+
+GOTIT          PHP            ; save Z-flag; Z=1 is timeout, Z=0 is real value
+
+               ; signal rcv busy / ack the receive
+ 
+               LDX #$01
+               STX UP         ; release PB0 high to indicate busy
+
+               LDA SR         ; read SR value, clears interrupt flag
+              
+               PLP            ; recover Z-flag
+
+               ;-----------------
+               ; print out (Z-flag for timout marker)
+               ; if A==Y then byte was correct, only print "."
+               ; otherwise print full info
+
+               JSR PRBIN
+
+               ;-----------------
+               ; count bytes, check if streak still active
+ 
+               INC cbytes
+               BNE IC1
+               INC cbytes+1
+               BNE IC1
+               INC cbytes+2
+IC1
+               LDA UP
+               AND #%00000010
+               BEQ GO
+
+               ;-----------------
+               ; end of streak, print stats
+
+               LDA #<stats1
+               LDY #>stats1
+               JSR txtout
+               LDX #cbytes - cbase
+               JSR hex3out
+
+               LDA #<stats2
+               LDY #>stats2
+               JSR txtout
+               LDX #cbiterr - cbase
+               JSR hex3out
+
+               LDA #<stats3
+               LDY #>stats3
+               JSR txtout
+               LDX #cshifterr - cbase
+               JSR hex3out
+
+               LDA #13
+               JSR $FFD2
+
+               JMP STREAK
+
+               ; ---------------------------------------
+               ; support code
+
+               ; print a byte ('.' if correct, bits otherwise)
+
+PRBIN          PHA      ; preserve .A on the stack
+               STY tmp
+               BEQ NOK
+	       CMP tmp
+               BNE PRINT
+               PLA
+               LDA #"."
+               JMP $FFD2
+NOK
+               TAY
+               LDA #13        ;print cr/lf
+               JSR $FFD2
+               lDA #"!"       ; print timeout marker
+               JSR $FFD2
+               TYA
+               INC cshifterr
+               BNE PRINT2
+               INC cshifterr+1
+               BNE PRINT2
+               INC cshifterr+2
+               BNE PRINT2
+
+PRINT          INC cbiterr
+               BNE PRINT2
+               INC cbiterr+1
+               BNE PRINT2
+               INC cbiterr+2
+PRINT2
+               TAY
+               LDA #$20
+               JSR $FFD2
+               TYA 
+               LDX #$08 ; count 8 bits
+BITLOOP        ASL      ; shift off the high bit
+               TAY
+               LDA #$00
+               ADC #$30 ; print the digit
+               JSR $FFD2
+               TYA      ; put .A back
+               DEX      ; decrement the bit counter
+               BNE BITLOOP
+
+               ; finished with binary. print a space
+
+               LDA #$20
+               JSR $FFD2
+
+               ; now print the received char, but don't try to print chars other than A-Z 
+
+               PLA      ; pull .A off the stack
+               TAY      ; temporarily store it in .Y
+               CMP #$41
+               BCC ADJUST ; if it's less than $41, adjust it
+               CMP #$5A
+               BCS ADJUST ; if it's greater than $5A, adjust it
+               BCC CHRNL  ; no adjustment necessary
+ADJUST         LDA #$2A   ; print an '*' if it's anything other than A-Z
+CHRNL          JSR $FFD2 
+
+               LDA #$0D ; print a CR
+               JSR $FFD2
+               LDA #$0A ; print a LF
+               JSR $FFD2
+               TYA      ; restore .A
+               RTS
+
+               ; ---------------------------------------
+               ; print a 3-byte hex value of a memory location 
+               ; with XR holding the relative offset to cbase
+hex3out		lda cbase+2,x
+		jsr hexout
+		lda cbase+1,x
+		jsr hexout
+		lda cbase,x
+hexout		pha
+		lsr
+		lsr
+		lsr
+		lsr
+		jsr nibout
+		pla
+nibout		and #$0f
+		cmp #10
+		bcc pdec
+		adc #$66
+pdec		eor #$30
+		jmp $FFD2
+
+               ; ---------------------------------------
+               ; print text
+               ; note self-modifying code so we don't use zeropage
+
+txtout		sta taddr
+		sty taddr+1
+		ldy #0
+l		lda $ffff,y
+taddr 		= l+1
+		beq t2
+		jsr $ffd2
+		iny
+		bne l
+t2		rts
+
+               ; ---------------------------------------
+
+cbase		=*
+cbytes		.byte 0,0,0
+cshifterr	.byte 0,0,0
+cbiterr		.byte 0,0,0
+
+stats1		.byte 13
+		.text 'STATISTICS: '
+                .byte 13
+		.null 'BYTES RX''D: '
+stats2		.byte 13 
+		.null 'BIT ERRORS: '
+stats3		.byte 13 
+		.null 'SHIFT ERRS: '
+
+tmp            .byte 0
+
+                ; ---------------------------
+                ; for simplicity, and we only need random data to compare,
+                ; not any scientifically "valid" randomness, we use a
+                ; the PRNG from here https://codebase64.org/doku.php?id=base:small_fast_16-bit_prng
+                ; with a fixed seed of $3d67 to achieve a period of the full 64k
+
+rng_s           = 43714
+rng_magic       = $3d67
+
+state           .word 0
+
+rng_init        lda #<rng_s
+                sta state
+                lda #>rng_s
+                sta state + 1
+                rts
+
+rng_next
+                 lda state
+                 beq lowZero ; $0000 and $8000 are special values to test for
+
+                 ; Do a normal shift
+                 asl state
+                 lda state+1
+                 rol
+                 bcc noEor
+
+                doEor:
+                  ; high byte is in .A
+                  eor #>rng_magic
+                  sta state+1
+                  lda state
+                  eor #<rng_magic
+                  sta state
+                lda state+1     ; return the high byte of the state
+                  rts
+
+                lowZero:
+                 lda state+1
+                 beq doEor ; High byte is also zero, so apply the EOR
+                           ; For speed, you could store 'magic' into 'state' directly
+                           ; instead of running the EORs
+
+                 ; wasn't zero, check for $8000
+                 asl
+                 beq noEor ; if $00 is left after the shift, then it was $80
+                 bcs doEor ; else, do the EOR based on the carry bit as usual
+
+                noEor:
+                 sta state+1
+                 rts
+
