@@ -11,9 +11,13 @@ of data received and errors detected.
 
 ## PET
 
-The PET files are mpsnd and mprcv. 
+The PET files are mpsnd[tp] and mprcv. 
 
 Load them using DLOAD or LOAD, and you start them with SYS4096
+
+There are two sender programs. "mpsndt" uses VIA T2 as clock source.
+"mpsndp" uses Phi2 instead as shift register clock source (but is unreliable
+and should not be used)
 
 ## VIC-20
 
