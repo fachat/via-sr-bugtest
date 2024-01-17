@@ -19,6 +19,6 @@ Load them using DLOAD or LOAD, and you start them with SYS4096
 
 The VIC-20 files are mvsnd and mvrcv. 
 
-Load them using LOAD"mvsnd",8,1 and you start them with SYS4112
+Load them using LOAD"mvsnd",8,1 and you start them with SYS4111
 
 

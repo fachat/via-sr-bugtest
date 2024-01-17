@@ -272,13 +272,13 @@ cshifterr	.byte 0,0,0
 cbiterr		.byte 0,0,0
 
 stats1		.byte 13
-		.text 'STATISTICS: '
+		.asc 'STATISTICS: '
                 .byte 13
-		.null 'BYTES RX''D: '
+		.asc "BYTES RX\'D: ",0
 stats2		.byte 13 
-		.null 'BIT ERRORS: '
+		.asc 'BIT ERRORS: ',0
 stats3		.byte 13 
-		.null 'SHIFT ERRS: '
+		.asc 'SHIFT ERRS: ',0
 
 tmp            .byte 0
 
