@@ -1,28 +1,7 @@
-# via-sr-bugtest
 
-These files implement test cases where you connect either 
-two Commodore PET or two Commodore VIC-20 using userport connection.
+# VIA SR test cases
 
-Then run "m?rcv" on the receiver side, and then m?send on the sender side.
+Two main types of tesc cases:
 
-The sender will send 64k of data over the serial shift register of the VIA
-and the receiver will receive it and at the end print out statistics 
-of data received and errors detected.
-
-## PET
-
-The PET files are mpsnd[tp] and mprcv. 
-
-Load them using DLOAD or LOAD, and you start them with SYS4096
-
-There are two sender programs. "mpsndt" uses VIA T2 as clock source.
-"mpsndp" uses Phi2 instead as shift register clock source (but is unreliable
-and should not be used)
-
-## VIC-20
-
-The VIC-20 files are mvsnd and mvrcv. 
-
-Load them using LOAD"mvsnd",8,1 and you start them with SYS4111
-
-
+* userport: connect two PET or two VIC-20 via userport and test the shift register comunication
+* fiec: Fast-IEC interface using a VIA on $e850 in my PET clone, connected to a 1571 disk drive
