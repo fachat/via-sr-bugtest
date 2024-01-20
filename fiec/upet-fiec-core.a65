@@ -26,7 +26,7 @@
 
 VIA	=$e850
 
-T2VAL	=4
+T2VAL	=1
 
 VIA_PB	=0
 VIA_DDRB=2
@@ -148,13 +148,8 @@ nobuf:
      	AND #P_AOUT	; is ATN already set?
      	BNE atnison	; yes, skip
 
-	lda #$ff
+	lda #$ff	;; send $ff, i.e. DATA stays high, FCLK (SRQ) toggles
      	JSR fastout	; Fast Disk On (set SR to output)
-
-     	;LDA #$FF
-     	;STA VIA+VIA_SR	; send $ff, i.e. DATA stays high, FCLK (SRQ) toggles
-
-     	JSR prep4res	; Prepare For Response, includes Fast serial off?
 
      	TXA		; wait loop
      	LDX #$14	; 143 cycles total (inc. TXA/TAX)
@@ -234,9 +229,7 @@ slowdrv:
 
 	lda BYTE
      	JSR fastout	; Fast Disk On
-     	;LDA BYTE
-     	;STA VIA+VIA_SR	; send byte via SR
-     	JSR prep4res	; Prepare For Response
+
      	JMP endtx	; finish sending via SR
 
 ; send slow byte
@@ -631,24 +624,6 @@ restore:
 ; -------------------------------------------------
 ; Prepare For Response
 
-prep4res:
-	LDA #VIA_IRQ_SR
-p4r	BIT VIA+VIA_IFR
-     	;LDA VIA+VIA_IFR
-     	;AND #VIA_IRQ_SR	; wait for SDR full interrupt source
-     	BEQ p4r			; Prepare For Response
-	sta VIA+VIA_IFR
-
-; Fast Disk Off
-
-fastoff:
-	LDA #%00001100		; shift in under ext clock
-	STA VIA+VIA_ACR
-
-	lda VIA+VIA_PB		; enable fast serial _input_
-	ora #P_FSDIR
-	sta VIA+VIA_PB
-     	RTS
 
 ; Fast Disk On
 
@@ -663,39 +638,41 @@ fastout:
 	lda #>T2VAL
 	sta VIA+VIA_T2H		; restart the timer
 
-	lda #%00100000
-f1	bit VIA+VIA_IFR
-	beq f1
+	; make sure T2 underflows before we set to send
+	; This check/loop is only needed iff T2VAL is high enough between store
+	; to T2H above and store to ACR below
+;	lda #%00100000
+;f1	bit VIA+VIA_IFR
+;	beq f1
+
+	; here T2L must have underflown to $ff and below, to make sure shift does not 
+	; automatically start on the next underflow until we set the next data value
 	
 	LDA #%00010100		; shift out under T2 control
 	STA VIA+VIA_ACR
 
 	pla
 	sta VIA+VIA_SR
-	rts
 
-faston:
-	lda VIA+VIA_PB		; enable fast serial _output_
-	and #255-P_FSDIR
-	sta VIA+VIA_PB
+	sta VIA+VIA_T2H		; restart the timer. This sheds about 230us from the duration
 
-	;lda VIA+VIA_SR		; dummy read
-	LDA #%00010100		; shift out under T2 control
+;prep4res:
+	LDA #VIA_IRQ_SR
+p4r	BIT VIA+VIA_IFR
+     	BEQ p4r			; Prepare For Response
+	sta VIA+VIA_IFR
+
+; Fast Disk Off
+
+fastoff:
+	LDA #%00001100		; shift in under ext clock
 	STA VIA+VIA_ACR
-	;LDA #VIA_IRQ_SR
-	;STA VIA+VIA_IFR		; clear SR interrupts
-	lda #>T2VAL
-	sta VIA+VIA_T2H		; restart the timer
-	;lda VIA+VIA_SR
 
-	; when adding these NOPs, the delay between first and second byte becomes two bits
-	nop
-	nop
-	nop
-	nop
-	nop
-
+	lda VIA+VIA_PB		; enable fast serial _input_
+	ora #P_FSDIR
+	sta VIA+VIA_PB
      	RTS
+	rts
 
 
 SETST:	
