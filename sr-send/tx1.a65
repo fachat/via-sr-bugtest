@@ -1,0 +1,93 @@
+
+
+; ----- Serial I/O 6522 -----
+PB             = VIA+0
+PA             = VIA+1
+DDRB           = VIA+2
+DDRA           = VIA+3
+T1LC           = VIA+4
+T1HC           = VIA+5
+T1LL           = VIA+6
+T1HL           = VIA+7
+T2L            = VIA+8
+T2H            = VIA+9
+SR             = VIA+10
+ACR            = VIA+11
+PCR            = VIA+12
+IFR            = VIA+13
+IER            = VIA+14
+PA_NOHS        = VIA+15
+
+
+        .word $0401
+        *=$0401
+
+        .word eol               ; BASIC link pointer
+        .word 10                ; line number
+        .byt $9e, "1040", 0     ; BASIC code (tokenized)
+eol     .word 0                 ; BASIC link pointer, 0 means end of code
+        .dsb 1040-*
+
+	;---------------------------------
+	; test how T2 counts down
+	; in one-shot mode
+	;
+	; note: 
+	; Original MOS says T2 counts N ... 1, 0, -1, -2
+	; R6522 says: N ... 1, 0, N, ...
+	; (which actually sounds unlikely as T2 only has a low byte latch
+	; and no way to store a re-start condition for the high byte)
+	;
+	; Result: W65C22 counts N ... 1, 0, -1, -2
+
+
+T2VAL	=20
+
+start	
+	;---------------------------------
+	; init state
+
+	; set port line to output on IEC/SERIAL board
+#if VIA = $e850
+	lda PB
+	and #255-1
+	sta PB
+#endif
+	; ACR.5 = 0 -> T2 one-shot mode
+	lda #%00000000
+	sta ACR
+	lda #%00000000
+	sta PCR
+
+	ldy #0
+
+	lda #<T2VAL
+	sta T2L
+	lda #>T2VAL
+	sta T2H
+
+	nop
+	;---------------------------------
+	; read timer value and poke to screen
+l	lda T2L
+	sta $8000,y
+	iny
+	lda T2H
+	sta $8000,y
+	iny
+	bne l
+
+	;---------------------------------
+	; cleanup
+
+#if VIA = $e850
+	lda PB
+	ora #1
+	sta PB
+#endif
+
+	brk
+	
+
+
+
