@@ -52,6 +52,8 @@ Setting a new value during this time overwrites part of the shifted byte and thu
 Test tx4 shows this
 
 The easiest way to overcome this problem is to write the next byte to be sent to the SR before setting the SR to output via T2.
+(Note: SR must be enabled, e.g. when set to shift in via external clock, to actually set the bit counter. If SR is disabled
+when writing, no shift will occur)
 
 As before setting the SR mode the T2 timer is in one-shot mode, it may be at any state of a 16 bit counter, more specifically,
 T2L may be in any of 256 states. This may introduce a random delay of up to 256-N cycles after setting the SR to output before shifting
