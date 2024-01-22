@@ -6,6 +6,20 @@
 ;	- Use port bit 0 for fast serial direction
 ;	- The C64 has input bits directly at CIA; uPET has inverters
 
+; The uPET has a Schmitt-Trigger receiver before the data goes
+; to the VIA. So, de-bouncing by reading and comparing is not 
+; necessary. Thus, this:
+;
+;       lda VIA+VIA_PB
+;       cmp VIA+VIA_PB
+;       asl
+;       bcc/bcs/bpl/bmi
+;
+; can be replaced with:
+;
+;       bit VIA+VIA_PB
+;       bpl/bmi/bvc/bvs
+
 
 ;	*=$4000
 
@@ -29,7 +43,9 @@ VIA	=$e850
 T2VAL	=1
 
 VIA_PB	=0
+VIA_PA	=1
 VIA_DDRB=2
+VIA_DDRA=3
 VIA_T2L	=8
 VIA_T2H	=9
 VIA_SR	=10
@@ -37,6 +53,7 @@ VIA_ACR	=11
 VIA_PCR	=12
 VIA_IFR	=13
 VIA_IER	=14
+VIA_PANH=15
 
 VIA_IRQ_SR	=%00000100
 
@@ -92,7 +109,7 @@ fiec_init: ; TODO
 	sta VIA+VIA_DDRB
 	lda #%00000001
 	sta VIA+VIA_PB
-	jsr fastoff
+	jsr fastoff		; sets ACR to SR mode 011 (input)
 	lda #$00
 	sta BURST_FLG
 	lda #0
@@ -100,12 +117,17 @@ fiec_init: ; TODO
 	sta STATUS
 	sta EOIFL
      	;LDA #$00
-	sta VIA+VIA_ACR
 	sta VIA+VIA_PCR
      	LDA #<T2VAL
      	STA VIA+VIA_T2L		; set timer for SR
 	LDA #>T2VAL
      	STA VIA+VIA_T2H
+
+lda #1
+sta VIA+VIA_DDRA
+lda #0
+sta VIA+VIA_PANH
+
 	rts
 
 ; -------------------------------------------------
@@ -143,7 +165,7 @@ nobuf:
 
      	JSR stabilize	; Stabilize Timing
 
-     	JSR datahi	; Set Data High
+     	;JSR datahi	; Set Data High
      	LDA VIA+VIA_PB
      	AND #P_AOUT	; is ATN already set?
      	BNE atnison	; yes, skip
@@ -183,12 +205,10 @@ delay:
 bytout:
      	JSR stabilize	; Stabilize Timing
      	JSR datahi	; Set Data High
-     	JSR readiec	; Read Serial Lines
-     	bcs devpres	; check if data is high
+	lda VIA+VIA_PB
+	bmi devpres	; check if data is high
      	JMP devnotpres	; if so, no device present
 devpres:
-	;lda #VIA_IRQ_SR
-	;sta VIA+VIA_IFR
 	LDA VIA+VIA_SR	; clear interrupts
 
      	JSR clkhi	; Set Clock High
@@ -196,17 +216,15 @@ devpres:
      	BPL notxeoi	; no, skip waiting for EOI acknowledge
 
 wdatahi:
-     	JSR readiec	; Read Serial Lines
-     	bcs wdatahi	; wait for DATA high
+	lda VIA+VIA_PB
+	bmi wdatahi	; wait for DATA high
 
 wdatalo:
-     	JSR readiec	; Read Serial Lines
-     	bcc wdatalo	; wait for DATA low
+	lda VIA+VIA_PB
+	bpl wdatalo	; wait for DATA low
 
 notxeoi:		; loop waiting for DATA going hi, or rx'ing a fast marker byte
      	LDA VIA+VIA_PB
-     	CMP VIA+VIA_PB
-     	BNE notxeoi	; debounce serial lines
      	PHA
      	LDA VIA+VIA_IFR
      	AND #VIA_IRQ_SR	; check if SR has received a byte
@@ -241,10 +259,7 @@ txslow:
 
 txsl1:
      	LDA VIA+VIA_PB
-     	CMP VIA+VIA_PB
-     	BNE txsl1	; debounce
-     	ASL
-     	bcs timeout	; if DATA is low, return send timeout
+	bmi timeout	; if DATA is low, return send timeout
 
      	ROR BYTE	; set DATA out to bit
      	BCS hiout
@@ -272,10 +287,10 @@ clkout:
 endtx:
      	TXA
      	PHA
-     	LDX #$22	; loop to wait for response
-w0:
-     	JSR readiec	; Read Serial Lines
-     	bcc w1		; DATA still high, then next
+     	LDX #73		; loop to wait for response (originally 34)
+w0:	; original loop takes 28 cycles, new 13
+	lda VIA+VIA_PB
+	bpl w1		; wait for DATA low
 
      	PLA
      	TAX		; restore X
@@ -322,22 +337,23 @@ IECIN
      	JSR clkhi	; Set Clock High
 
 inm1
-     	JSR readiec	; Read Serial Lines
-     	bmi inm1	; wait for CLK high
+	bit VIA+VIA_PB
+	bvs inm1	; wait for CLK high (from sender)
 
 in0:
-     	LDX #$0D	; 13 iterations to wait for DATA low 
+     	;LDA VIA+VIA_PB
+     	;AND #255-P_DOUT	; set DATA high
+     	;STA VIA+VIA_PB
+	jsr datahi
 
-     	LDA VIA+VIA_PB
-     	AND #255-P_DOUT	; set DATA high
-     	STA VIA+VIA_PB
+dh	bit VIA+VIA_PB
+	bmi dh		; wait DATA high (from other receivers)
 
-in1:
-     	LDA VIA+VIA_PB
-     	CMP VIA+VIA_PB
-     	BNE in1		; debounce
-     	ASL
-     	bmi rxdata	; if CLK is low, continue (to E484)
+     	LDX #20		; 20 iterations to wait for DATA low  (was 13, but loop got faster)
+in1:			; originally 17 cycles, now 11
+	bit VIA+VIA_PB
+	bvs rxdata	; if CLK is low, continue (to E484)
+
      	DEX
      	BNE in1		; next try
 
@@ -345,7 +361,9 @@ in1:
      	BNE in2		; EOI already received, then read timeout
 
      	JSR datalo	; Set Data Low
-     	JSR clkhi	; Set Clock High
+
+	jsr clkhi
+
      	LDA #$40
      	JSR SETST	; Set Status Bit to EOI
      	INC BITCNT	; set flag for EOI received
@@ -357,45 +375,37 @@ in2:
      	LDA #$02	; read timeout
      	JMP errout
 
+; receive byte
+
 rxdata:
      	LDX #$08	; bit count
-
 rx0:
      	LDA VIA+VIA_IFR
      	AND #VIA_IRQ_SR	; is SR receive interrupt set?
      	BNE rxfast	; yes, then receive fast byte
 
-; receive slow byte
-
+	; wait for 1st slow bit (while checking for fast rx)
 rxsl1:
      	LDA VIA+VIA_PB
-     	CMP VIA+VIA_PB
-     	BNE rxsl1	; debounce
      	ASL		; put DATA into C
      	bmi rx0		; wait for CLK high
 
+	; slow receive
 rxnxt:
      	ROR RXBYT	; save DATA in received byte
-
 rxsl2:
-     	LDA VIA+VIA_PB
-     	CMP VIA+VIA_PB
-     	BNE rxsl2
-     	ASL
-     	bpl rxsl2	; wait CLK low
-     	DEX
-     	BEQ rxend
+	bit VIA+VIA_PB
+	bvc rxsl2	; wait for CLK lo
 
+     	DEX		; next bit
+     	BEQ rxend
 rxsl3:
      	LDA VIA+VIA_PB
-     	CMP VIA+VIA_PB
-     	BNE rxsl3:
-     	ASL
+     	ASL		; put DATA into C
      	bmi rxsl3:	; wait CLK high
      	bpl rxnxt	; always, save next bit
 
-; receive fast byte
-
+	; receive fast byte
 rxfast:
      	LDA VIA+VIA_SR
 	eor #$ff
@@ -408,6 +418,7 @@ rxfast:
 rxend:
      	PLA
      	TAX
+;nop:nop:nop:nop:nop:nop:nop
      	JSR datalo	; Set Data Low
      	BIT STATUS 	; Status word ST
      	BVC rxe1
@@ -416,6 +427,13 @@ rxe1:
      	JSR restore	; Restore Timing
      	LDA RXBYT
 	eor #$ff
+; this delay seems to break fast DIR
+;nop:nop:nop:nop:nop:nop:nop
+;cmp #%10010101
+;cmp #%00101011
+;bne xx
+;inc VIA+VIA_PANH
+;xx:
      	CLC
      	RTS
 
@@ -450,11 +468,8 @@ SECTALK
      	JSR clkhi	; Set Clock High
 
 talk1:
-     	LDA VIA+VIA_PB	; wait for CLK lo
-     	CMP VIA+VIA_PB
-     	BNE talk1
-     	ASL
-     	bpl talk1	; loop on CLK hi
+	bit VIA+VIA_PB
+	bvc talk1	; wait for CLK lo
      	JMP restore	; Restore Timing
 
 ; -ciout-  Print Serial
@@ -552,12 +567,10 @@ datalo:
 ; return DATA in C, CLK in N-flag
 	.assert P_DATA == $80, "Bit check mismatch"
 	.assert P_CLK == $40, "Bit check mismatch"
-readiec:
-     	LDA VIA+VIA_PB
-     	CMP VIA+VIA_PB
-     	BNE readiec	; Read Serial Lines
-     	ASL
-     	RTS
+;readiec:
+;     	LDA VIA+VIA_PB
+;     	ASL
+;     	RTS
 
 ; -------------------------------------------------
 ; Stabilize Timing
@@ -603,7 +616,7 @@ stabilize:
 ; Restore Timing
 
 restore:
-	cli
+;	cli
 	rts
 ;E59F:	BIT $0A3A	; flag $0a3a.7 is set?
 ;E5A2:	BMI restend	; yes then end
@@ -628,22 +641,22 @@ restore:
 ; Fast Disk On
 
 fastout:
-	pha
+	sta VIA+VIA_SR		; "each read and write will trigger a shift..."
+
 	lda VIA+VIA_PB		; enable fast serial _output_
 	and #255-P_FSDIR
 	sta VIA+VIA_PB
 
-	;lda VIA+VIA_SR		; "each read and write will trigger a shift..."
-
-	lda #>T2VAL
 	sta VIA+VIA_T2H		; restart the timer
 
+#if T2VAL > 1
 	; make sure T2 underflows before we set to send
-	; This check/loop is only needed iff T2VAL is high enough between store
-	; to T2H above and store to ACR below
+	; This check/loop is only needed iff T2VAL is high enough to NOT underflow
+	; between store to T2H above and store to ACR below
 ;	lda #%00100000
 ;f1	bit VIA+VIA_IFR
 ;	beq f1
+#endif
 
 	; here T2L must have underflown to $ff and below, to make sure shift does not 
 	; automatically start on the next underflow until we set the next data value
@@ -651,12 +664,10 @@ fastout:
 	LDA #%00010100		; shift out under T2 control
 	STA VIA+VIA_ACR
 
-	pla
-	sta VIA+VIA_SR
-
 	sta VIA+VIA_T2H		; restart the timer. This sheds about 230us from the duration
 
-;prep4res:
+	; wait for finished byte, then switch off fast serial
+	; (can this be optimized?)
 	LDA #VIA_IRQ_SR
 p4r	BIT VIA+VIA_IFR
      	BEQ p4r			; Prepare For Response

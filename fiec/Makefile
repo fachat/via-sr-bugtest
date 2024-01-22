@@ -1,6 +1,6 @@
 
 
-FILES=dosscr 
+FILES=dosscr dosmkdata dosvfdata dosi0 doscat dosdir dosval dosdir dostst dosfmt
 
 all: $(FILES)
 
