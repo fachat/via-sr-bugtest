@@ -3,8 +3,9 @@
 
 ## When switching to output via ACR
 
-Deduction: when reading or writing to the SR, the bit counter is reset to 8 anyway, no matter if sending or receiving.
-E.g. when receiving, we read the last byte received and thus set the bit counter.
+Deduction: when reading or writing to the SR, the bit counter is reset to 8 anyway (if it is not already in progress), no matter if sending or receiving.
+E.g. when receiving, we read the last byte received and thus set the bit counter. IFF we do this while the shifting is already in progress, 
+the bit counter is not reset, but we either read partially shifted in data, or even overwrite those bits that have not yet shifted out.
 
 However, when switching to output, as the bit counter is 8, it will then directly start shifting the current SR value on the next shift condition.
 (this has been tested with T2 as timer source, see below).

@@ -1,0 +1,147 @@
+
+
+; ----- Serial I/O 6522 -----
+PB             = VIA+0
+PA             = VIA+1
+DDRB           = VIA+2
+DDRA           = VIA+3
+T1LC           = VIA+4
+T1HC           = VIA+5
+T1LL           = VIA+6
+T1HL           = VIA+7
+T2L            = VIA+8
+T2H            = VIA+9
+SR             = VIA+10
+ACR            = VIA+11
+PCR            = VIA+12
+IFR            = VIA+13
+IER            = VIA+14
+PA_NOHS        = VIA+15
+
+
+        .word $0401
+        *=$0401
+
+        .word eol               ; BASIC link pointer
+        .word 10                ; line number
+        .byt $9e, "1040", 0     ; BASIC code (tokenized)
+eol     .word 0                 ; BASIC link pointer, 0 means end of code
+        .dsb 1040-*
+
+	;---------------------------------
+	; test when SR starts 
+	; 
+	; in this setup, 
+	; 1. T2 is set to 4
+	; 2. the timer is reset
+	; 3. the output value is written to SR
+	; 4. SR is started when writing to ACR
+	; 5. the timer is reset again to reduce the T2L lag
+	;
+	; The main condition is that T2 underflows after
+	; we set SR to output via T2, buf before we store
+	; a new value in SR
+	; 
+	; note: Phi2 ~ 0.95us
+	; 
+	; scope:
+	; T=0		: CB1 goes high
+	; T=44us	: ATN goes low
+	; T=50us	; CB1 goes low 
+	; T=60us	; CB1 goes low for first shift clock
+	; dT=12us/bit	; shift out data value (%10101010)
+	;	i.e. 6us = N+2 / half-bit
+	;
+	; reading T2 after writing to SR gives this pattern:
+	; T2L seems to count down $04, $03, $02, $01, $00, $ff, and restarts $04
+	; while the T2H actually counts down from $12 with every T2L underflow.
+	; (note that between reads there are 4-5 underflows, so T2H goes $12, $0d, 
+	; $09, ...)
+	; 
+	; result:
+	; We can send a byte via SR that we wrote before starting the timer
+	; The shift starts immediately when we reset the timer after setting to output
+
+
+T2VAL	=1
+
+start	
+	;---------------------------------
+	; init state
+
+	; set port line (PB0) to output on IEC/SERIAL board
+	; set ATN, DATA, CLK high (PB3)
+#if VIA = $e850
+	lda PB
+	and #255-1-8-16-32
+	sta PB
+	lda DDRB
+	ora #1+8+16+32
+	sta DDRB
+#endif
+	; clear all interrupt enable and flag bits
+	lda #%01111111
+	sta IER
+	sta IFR
+
+	; set CB2 high output
+	lda #%00001110
+	sta PCR			; CB1 going high with write here, T=0
+
+; numeric labels are time since T=0 in clock cycles, i.e. ~0.95us
+
+	; ACR.5 = 0 -> T2 one-shot mode
+1:	lda #%00000000
+3:	sta ACR
+
+7:	lda #<T2VAL
+9:	sta T2L
+13:	lda #>T2VAL
+15:	sta T2H
+
+	; ACR.5 = 0 -> T2 one-shot mode
+	; ACR.4-2 = 011 -> shift IN under external
+19:	lda #%00001100
+21:	sta ACR	
+
+25:	lda #%10101010
+27:	sta SR	; data write
+
+31:	lda T2L
+35:	sta $8000	; debug output
+
+39:	sta T2H		; dummy write to reload T2 and make sure T2L underflows to $ff before setting to output
+
+#if VIA = $e850
+	; start timing, trigger for scope
+43:	lda PB
+47:	ora #8		; ATN low 
+49:	sta PB
+#endif
+	; ACR.4-2 = 101 -> shift OUT under T2
+53:	lda #%00010100	
+55:	sta ACR
+
+59:	sta T2H		; re-trigger T2
+
+	;---------------------------------
+	; read timer value and poke to screen
+	ldy #40
+l	lda IFR
+	sta $8000,y
+	iny
+	bne l
+
+	;---------------------------------
+	; cleanup
+
+#if VIA = $e850
+	lda PB
+	and #255-1-8
+	sta PB
+#endif
+	brk
+	
+
+
+

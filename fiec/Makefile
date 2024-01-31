@@ -1,8 +1,9 @@
 
 
-FILES=dosscr dosmkdata dosvfdata dosi0 doscat dosdir dosval dosdir dostst dosfmt
+DOSFILES=dosscr dosmkdata dosvfdata dosi0 doscat dosdir dosval dosdir dostst dosfmt
+ESRFILES=esrdir esrtst 
 
-all: $(FILES)
+all: $(DOSFILES) $(ESRFILES)
 
 %.bin: %.a65
 	xa -XMASM -o $@ $<
@@ -15,5 +16,5 @@ upet-fiec-core.bin: upet-fiec-core.a65
 	
 clean:
 	rm -f *.bin *.lst
-	rm -f $(FILES)
+	rm -f $(DOSFILES) $(ESRFILES)
 

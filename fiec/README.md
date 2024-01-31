@@ -1,7 +1,6 @@
 
 # Implementation of the Commodore Fast Serial bus using a VIA6522
 
-Current state: when sending the "S0:PSEUDO64K" command, on the bus we see the "S" ok, but then is a bit inserted, and all following bytes are shifted by one bit
 
 ## Pinout:
 
@@ -20,6 +19,9 @@ Cb2: Fast serial data <-> DATA
 
 All test programs starting with "dos" include the actual driver code
 in the binary itself.
+
+The test programs with "esr" work the same way, but they include the code where receiving is done
+using two external 74LS164 shift register ICs (one for data, one for bit count)
 
 The test programs expect the serial drive to have unit #9
 
